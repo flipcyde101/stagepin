@@ -49,12 +49,12 @@ volumes:
   stagepin_data:
 ```
 
-### 1-Line `<script>` Fallback
+### 1-Line `<script>` Fallback (Same-Origin Path Routing)
 
-When you prefer embedding directly instead of reverse-proxying HTML, include the overlay script served by your Stagepin instance:
+When routing `/__stagepin/` on the same origin behind Caddy, Nginx, or Traefik instead of reverse-proxying HTML:
 
 ```html
-<script defer src="http://localhost:8080/__stagepin/overlay.js"></script>
+<script defer src="/__stagepin/overlay.js"></script>
 ```
 
 ---

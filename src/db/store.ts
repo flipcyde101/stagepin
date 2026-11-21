@@ -26,20 +26,39 @@ interface ReplyRow {
   created_at: string;
 }
 
+export function validateHttpUrl(raw: string): string {
+  let parsed: URL;
+  try {
+    parsed = new URL(raw);
+  } catch {
+    throw new Error(`Invalid URL: "${raw}"`);
+  }
+  if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
+    throw new Error(`Unsupported URL protocol "${parsed.protocol}": only http(s) URLs are allowed`);
+  }
+  return parsed.toString();
+}
+
 function normalizeDiagnostics(input?: Partial<PinDiagnostics>): PinDiagnostics {
+  const diag = input && typeof input === "object" ? input : {};
+  const rawEvents = Array.isArray(diag.events) ? diag.events.filter((e) => Boolean(e) && typeof e === "object") : [];
   return {
-    viewportWidth: typeof input?.viewportWidth === "number" && Number.isFinite(input.viewportWidth) ? Math.max(0, Math.round(input.viewportWidth)) : 0,
-    viewportHeight: typeof input?.viewportHeight === "number" && Number.isFinite(input.viewportHeight) ? Math.max(0, Math.round(input.viewportHeight)) : 0,
-    userAgent: typeof input?.userAgent === "string" ? input.userAgent.slice(0, 400) : "",
-    events: Array.isArray(input?.events)
-      ? input.events.slice(-20).map((e) => ({
-          kind: e.kind === "network.error" || e.kind === "window.error" ? e.kind : "console.error",
-          timestamp: typeof e.timestamp === "string" ? e.timestamp.slice(0, 40) : new Date().toISOString(),
-          message: typeof e.message === "string" ? e.message.slice(0, 600) : "",
-          status: typeof e.status === "number" && Number.isFinite(e.status) ? e.status : undefined,
-          url: typeof e.url === "string" ? e.url.slice(0, 500) : undefined,
-        }))
-      : [],
+    viewportWidth:
+      typeof diag.viewportWidth === "number" && Number.isFinite(diag.viewportWidth)
+        ? Math.max(0, Math.round(diag.viewportWidth))
+        : 0,
+    viewportHeight:
+      typeof diag.viewportHeight === "number" && Number.isFinite(diag.viewportHeight)
+        ? Math.max(0, Math.round(diag.viewportHeight))
+        : 0,
+    userAgent: typeof diag.userAgent === "string" ? diag.userAgent.slice(0, 400) : "",
+    events: rawEvents.slice(-20).map((e) => ({
+      kind: e.kind === "network.error" || e.kind === "window.error" ? e.kind : "console.error",
+      timestamp: typeof e.timestamp === "string" ? e.timestamp.slice(0, 40) : new Date().toISOString(),
+      message: typeof e.message === "string" ? e.message.slice(0, 600) : "",
+      status: typeof e.status === "number" && Number.isFinite(e.status) ? e.status : undefined,
+      url: typeof e.url === "string" ? e.url.slice(0, 500) : undefined,
+    })),
   };
 }
 
@@ -96,6 +115,15 @@ export class PinStore {
       parsedDiag = {};
     }
 
+    let safeGithubUrl: string | null = null;
+    if (row.github_url) {
+      try {
+        safeGithubUrl = validateHttpUrl(row.github_url);
+      } catch {
+        safeGithubUrl = null;
+      }
+    }
+
     return {
       id: row.id,
       pagePath: row.page_path,
@@ -107,7 +135,7 @@ export class PinStore {
       body: row.body,
       status: row.status === "resolved" ? "resolved" : "open",
       diagnostics: normalizeDiagnostics(parsedDiag),
-      githubUrl: row.github_url,
+      githubUrl: safeGithubUrl,
       createdAt: row.created_at,
       replies: replies.map((r) => ({
         id: r.id,
@@ -120,14 +148,17 @@ export class PinStore {
   }
 
   createPin(input: CreatePinInput): Pin {
-    const body = input.body.trim();
+    if (!input || typeof input !== "object") {
+      throw new Error("Invalid pin payload");
+    }
+    const body = typeof input.body === "string" ? input.body.trim() : "";
     if (!body) throw new Error("Pin comment body is required");
-    const pagePath = (input.pagePath || "/").slice(0, 500);
-    const selector = (input.selector || "body").slice(0, 500);
-    const anchorText = (input.anchorText ?? "").trim().slice(0, 200);
-    const author = (input.author ?? "Guest").trim().slice(0, 80) || "Guest";
-    const xPercent = Math.max(0, Math.min(100, Number.isFinite(input.xPercent) ? input.xPercent : 50));
-    const yPercent = Math.max(0, Math.min(100, Number.isFinite(input.yPercent) ? input.yPercent : 50));
+    const pagePath = (typeof input.pagePath === "string" && input.pagePath ? input.pagePath : "/").slice(0, 500);
+    const selector = (typeof input.selector === "string" && input.selector ? input.selector : "body").slice(0, 500);
+    const anchorText = (typeof input.anchorText === "string" ? input.anchorText : "").trim().slice(0, 200);
+    const author = (typeof input.author === "string" ? input.author : "Guest").trim().slice(0, 80) || "Guest";
+    const xPercent = Math.max(0, Math.min(100, typeof input.xPercent === "number" && Number.isFinite(input.xPercent) ? input.xPercent : 50));
+    const yPercent = Math.max(0, Math.min(100, typeof input.yPercent === "number" && Number.isFinite(input.yPercent) ? input.yPercent : 50));
     const diagnostics = normalizeDiagnostics(input.diagnostics);
     const now = new Date().toISOString();
 
@@ -157,10 +188,10 @@ export class PinStore {
   }
 
   addReply(pinId: number, author: string, body: string): PinReply {
-    const cleanBody = body.trim();
+    const cleanBody = typeof body === "string" ? body.trim() : "";
     if (!cleanBody) throw new Error("Reply body is required");
     if (!this.getPin(pinId)) throw new Error(`Pin #${pinId} not found`);
-    const cleanAuthor = author.trim().slice(0, 80) || "Guest";
+    const cleanAuthor = (typeof author === "string" ? author : "Guest").trim().slice(0, 80) || "Guest";
     const now = new Date().toISOString();
 
     const res = this.db
@@ -183,7 +214,8 @@ export class PinStore {
   }
 
   setPinGithubUrl(pinId: number, url: string): Pin | null {
-    const res = this.db.prepare("UPDATE pins SET github_url = ? WHERE id = ?").run(url, pinId);
+    const safeUrl = validateHttpUrl(url);
+    const res = this.db.prepare("UPDATE pins SET github_url = ? WHERE id = ?").run(safeUrl, pinId);
     if (res.changes === 0) return null;
     return this.getPin(pinId);
   }

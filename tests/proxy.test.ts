@@ -82,7 +82,7 @@ describe("stagepin reverse proxy, auth gate, overlay injection, and pin API", ()
     // 6. Pin CRUD + replies + status toggle work through internal API
     const createdRes = await fetch(`${sp.url}/__stagepin/api/pins`, {
       method: "POST",
-      headers: { Cookie: authCookie, "Content-Type": "application/json" },
+      headers: { Cookie: authCookie, "Content-Type": "application/json", "X-Stagepin-Request": "1" },
       body: JSON.stringify({ pagePath: "/", selector: "h1", xPercent: 50, yPercent: 20, body: "Bump heading size" }),
     });
     expect(createdRes.status).toBe(201);
@@ -95,7 +95,7 @@ describe("stagepin reverse proxy, auth gate, overlay injection, and pin API", ()
 
     const patchRes = await fetch(`${sp.url}/__stagepin/api/pins/${created.id}/status`, {
       method: "PATCH",
-      headers: { Cookie: authCookie, "Content-Type": "application/json" },
+      headers: { Cookie: authCookie, "Content-Type": "application/json", "X-Stagepin-Request": "1" },
       body: JSON.stringify({ status: "resolved" }),
     });
     expect(patchRes.status).toBe(200);

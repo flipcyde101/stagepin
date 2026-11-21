@@ -5,7 +5,7 @@ export interface OverlayConfig {
 
 /**
  * Generates the self-contained zero-dependency Shadow DOM overlay JS bundle
- * served at `/__stagepin/overlay.js` (or embeddable via 1-line <script> tag).
+ * served at `/__stagepin/overlay.js`.
  * All user-authored text is rendered via textContent (never innerHTML) to prevent XSS.
  */
 export function buildOverlayScript(config: OverlayConfig): string {
@@ -18,6 +18,7 @@ export function buildOverlayScript(config: OverlayConfig): string {
 
   const API_BASE = ${apiBaseJson};
   const GITHUB_ENABLED = ${githubEnabledJson};
+  const SCRIPT_NONCE = (document.currentScript && document.currentScript.nonce) || "";
   const MAX_DIAG = 20;
   const diagRing = [];
 
@@ -26,13 +27,25 @@ export function buildOverlayScript(config: OverlayConfig): string {
     if (diagRing.length > MAX_DIAG) diagRing.shift();
   }
 
-  // Capture console.error & failed fetch events into a bounded ring buffer
+  function formatArg(a) {
+    if (typeof a === "string") return a;
+    if (a instanceof Error) return a.stack || a.message || String(a);
+    try { return JSON.stringify(a); } catch { return String(a); }
+  }
+
+  function extractFetchUrl(input) {
+    if (typeof input === "string") return input;
+    if (input instanceof URL) return input.toString();
+    if (input && typeof input.url === "string") return input.url;
+    return "";
+  }
+
   const origConsoleError = console.error.bind(console);
   console.error = (...args) => {
     try {
       pushDiag({
         kind: "console.error",
-        message: args.map((a) => (typeof a === "string" ? a : JSON.stringify(a))).join(" ").slice(0, 500),
+        message: args.map(formatArg).join(" ").slice(0, 500),
       });
     } catch {}
     return origConsoleError(...args);
@@ -45,7 +58,7 @@ export function buildOverlayScript(config: OverlayConfig): string {
   if (typeof window.fetch === "function") {
     const origFetch = window.fetch.bind(window);
     window.fetch = async (...args) => {
-      const url = typeof args[0] === "string" ? args[0] : (args[0] && args[0].url) || "";
+      const url = extractFetchUrl(args[0]);
       try {
         const res = await origFetch(...args);
         if (!res.ok && !url.includes("/__stagepin/")) {
@@ -61,6 +74,10 @@ export function buildOverlayScript(config: OverlayConfig): string {
     };
   }
 
+  function escapeAttrVal(val) {
+    return val.replace(/\\\\/g, "\\\\\\\\").replace(/"/g, '\\\\"').replace(/[\\r\\n\\f]/g, " ");
+  }
+
   function buildSelector(el) {
     if (!el || el.nodeType !== 1) return "body";
     if (el.id) return "#" + CSS.escape(el.id);
@@ -73,9 +90,14 @@ export function buildOverlayScript(config: OverlayConfig): string {
         parts.unshift("#" + CSS.escape(cur.id));
         break;
       }
-      const testId = cur.getAttribute("data-testid") || cur.getAttribute("aria-label");
-      if (testId) {
-        parts.unshift(part + '[aria-label="' + testId.replace(/"/g, '\\\\"') + '"]');
+      const dataTestId = cur.getAttribute("data-testid");
+      if (dataTestId) {
+        parts.unshift(part + '[data-testid="' + escapeAttrVal(dataTestId) + '"]');
+        break;
+      }
+      const ariaLabel = cur.getAttribute("aria-label");
+      if (ariaLabel) {
+        parts.unshift(part + '[aria-label="' + escapeAttrVal(ariaLabel) + '"]');
         break;
       }
       const siblings = cur.parentElement ? Array.from(cur.parentElement.children).filter((c) => c.tagName === cur.tagName) : [];
@@ -89,6 +111,16 @@ export function buildOverlayScript(config: OverlayConfig): string {
     return parts.join(" > ") || "body";
   }
 
+  function apiMutate(path, method, payload) {
+    const headers = { "X-Stagepin-Request": "1" };
+    const init = { method, headers };
+    if (payload !== undefined) {
+      headers["Content-Type"] = "application/json";
+      init.body = JSON.stringify(payload);
+    }
+    return fetch(API_BASE + path, init);
+  }
+
   const host = document.createElement("div");
   host.id = "stagepin-shadow-host";
   host.style.cssText = "position:fixed;inset:0;pointer-events:none;z-index:2147483646;";
@@ -96,6 +128,7 @@ export function buildOverlayScript(config: OverlayConfig): string {
   const shadow = host.attachShadow({ mode: "open" });
 
   const style = document.createElement("style");
+  if (SCRIPT_NONCE) style.setAttribute("nonce", SCRIPT_NONCE);
   style.textContent = \`
     * { box-sizing: border-box; font-family: ui-sans-serif, system-ui, -apple-system, sans-serif; }
     .sp-bar {
@@ -108,6 +141,7 @@ export function buildOverlayScript(config: OverlayConfig): string {
       background: #1f6feb; color: #fff; border: 0; border-radius: 999px;
       padding: 6px 12px; font-size: 12px; font-weight: 600; cursor: pointer;
     }
+    .sp-btn:disabled { opacity: 0.5; cursor: not-allowed; }
     .sp-btn.active { background: #f85149; }
     .sp-btn.ghost { background: #21262d; color: #e6edf3; border: 1px solid #30363d; }
     .sp-pin {
@@ -226,7 +260,7 @@ export function buildOverlayScript(config: OverlayConfig): string {
       box.appendChild(diag);
     }
 
-    if (pin.githubUrl) {
+    if (pin.githubUrl && /^https?:\\/\\//i.test(pin.githubUrl)) {
       const ghLink = document.createElement("a");
       ghLink.href = pin.githubUrl;
       ghLink.target = "_blank";
@@ -259,25 +293,34 @@ export function buildOverlayScript(config: OverlayConfig): string {
     replyBtn.textContent = "Reply";
     replyBtn.addEventListener("click", async () => {
       if (!replyInput.value.trim()) return;
-      await fetch(API_BASE + "/api/pins/" + pin.id + "/replies", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ author: "Reviewer", body: replyInput.value.trim() }),
-      });
-      replyInput.value = "";
-      await loadPins();
+      replyBtn.disabled = true;
+      try {
+        const res = await apiMutate("/api/pins/" + pin.id + "/replies", "POST", {
+          author: "Reviewer",
+          body: replyInput.value.trim(),
+        });
+        if (res.ok) {
+          replyInput.value = "";
+          await loadPins();
+        }
+      } finally {
+        replyBtn.disabled = false;
+      }
     });
 
     const statusBtn = document.createElement("button");
     statusBtn.className = "sp-btn ghost";
     statusBtn.textContent = pin.status === "open" ? "Resolve" : "Reopen";
     statusBtn.addEventListener("click", async () => {
-      await fetch(API_BASE + "/api/pins/" + pin.id + "/status", {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ status: pin.status === "open" ? "resolved" : "open" }),
-      });
-      await loadPins();
+      statusBtn.disabled = true;
+      try {
+        await apiMutate("/api/pins/" + pin.id + "/status", "PATCH", {
+          status: pin.status === "open" ? "resolved" : "open",
+        });
+        await loadPins();
+      } finally {
+        statusBtn.disabled = false;
+      }
     });
 
     if (GITHUB_ENABLED) {
@@ -287,8 +330,13 @@ export function buildOverlayScript(config: OverlayConfig): string {
       ghBtn.addEventListener("click", async () => {
         ghBtn.disabled = true;
         ghBtn.textContent = "Pushing...";
-        await fetch(API_BASE + "/api/pins/" + pin.id + "/github", { method: "POST" });
-        await loadPins();
+        try {
+          await apiMutate("/api/pins/" + pin.id + "/github", "POST");
+          await loadPins();
+        } finally {
+          ghBtn.disabled = false;
+          ghBtn.textContent = "Push to GitHub";
+        }
       });
       row.appendChild(ghBtn);
     }
@@ -340,10 +388,9 @@ export function buildOverlayScript(config: OverlayConfig): string {
     saveBtn.textContent = "Save Pin";
     saveBtn.addEventListener("click", async () => {
       if (!textarea.value.trim()) return;
-      const res = await fetch(API_BASE + "/api/pins", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
+      saveBtn.disabled = true;
+      try {
+        const res = await apiMutate("/api/pins", "POST", {
           pagePath: window.location.pathname || "/",
           selector,
           anchorText,
@@ -357,13 +404,15 @@ export function buildOverlayScript(config: OverlayConfig): string {
             userAgent: navigator.userAgent,
             events: diagRing.slice(-20),
           },
-        }),
-      });
-      if (res.ok) {
-        const created = await res.json();
-        activePinId = created.id;
-        setPinMode(false);
-        await loadPins();
+        });
+        if (res.ok) {
+          const created = await res.json();
+          activePinId = created.id;
+          setPinMode(false);
+          await loadPins();
+        }
+      } finally {
+        saveBtn.disabled = false;
       }
     });
 
@@ -404,6 +453,8 @@ export function buildOverlayScript(config: OverlayConfig): string {
 
   window.addEventListener("resize", renderPins);
   window.addEventListener("scroll", renderPins, { passive: true });
+  window.addEventListener("popstate", renderPins);
+  window.addEventListener("hashchange", renderPins);
 
   if (typeof EventSource !== "undefined") {
     const es = new EventSource(API_BASE + "/events");

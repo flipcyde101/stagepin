@@ -64,5 +64,4 @@ export interface StagepinServerOptions {
   password?: string;
   githubTarget?: string;
   githubToken?: string;
-  allowPrivateUpstream?: boolean;
 }

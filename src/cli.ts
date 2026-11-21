@@ -32,20 +32,34 @@ Options:
   -h, --help                            Show this help`);
 }
 
-function requireVal(argv: string[], i: number, flag: string): string {
+function requireVal(argv: string[], i: number, flag: string, allowLeadingDash = false): string {
   const v = argv[i + 1];
-  if (!v || v.trim().startsWith("-")) throw new Error(`Missing value for ${flag}`);
+  if (v === undefined || (!allowLeadingDash && v.trim().startsWith("-"))) {
+    throw new Error(`Missing value for ${flag}`);
+  }
   return v;
 }
 
+function parsePort(raw: string, label: string): number {
+  if (!/^\d+$/.test(raw.trim())) {
+    throw new Error(`${label} must be an integer 0..65535`);
+  }
+  const p = Number(raw.trim());
+  if (!Number.isInteger(p) || p < 0 || p > 65535) {
+    throw new Error(`${label} must be an integer 0..65535`);
+  }
+  return p;
+}
+
 export function parseCliArgs(argv: string[], env: NodeJS.ProcessEnv = process.env): ParsedCliArgs {
+  const envPort = env.STAGEPIN_PORT?.trim();
   const parsed: ParsedCliArgs = {
     mode: "proxy",
     upstream: env.STAGEPIN_UPSTREAM?.trim() || undefined,
     host: env.STAGEPIN_HOST?.trim() || "127.0.0.1",
-    port: env.STAGEPIN_PORT ? Number(env.STAGEPIN_PORT) : 8080,
+    port: envPort ? parsePort(envPort, "STAGEPIN_PORT") : 8080,
     dbPath: env.STAGEPIN_DB?.trim() || undefined,
-    password: env.STAGEPIN_PASSWORD?.trim() || undefined,
+    password: env.STAGEPIN_PASSWORD && env.STAGEPIN_PASSWORD.trim().length > 0 ? env.STAGEPIN_PASSWORD : undefined,
     githubTarget: env.STAGEPIN_GITHUB?.trim() || undefined,
   };
 
@@ -57,24 +71,34 @@ export function parseCliArgs(argv: string[], env: NodeJS.ProcessEnv = process.en
     } else if (arg === "--demo") {
       parsed.mode = "demo";
     } else if (arg === "--upstream") {
-      parsed.upstream = requireVal(argv, i, "--upstream").trim();
+      const val = requireVal(argv, i, "--upstream").trim();
+      if (!val) throw new Error("--upstream cannot be empty");
+      parsed.upstream = val;
       i++;
     } else if (arg === "--host") {
-      parsed.host = requireVal(argv, i, "--host").trim();
+      const val = requireVal(argv, i, "--host").trim();
+      if (!val) throw new Error("--host cannot be empty");
+      parsed.host = val;
       i++;
     } else if (arg === "--port") {
-      const p = Number(requireVal(argv, i, "--port"));
-      if (!Number.isInteger(p) || p < 0 || p > 65535) throw new Error("--port must be an integer 0..65535");
-      parsed.port = p;
+      parsed.port = parsePort(requireVal(argv, i, "--port"), "--port");
       i++;
     } else if (arg === "--db") {
-      parsed.dbPath = requireVal(argv, i, "--db").trim();
+      const val = requireVal(argv, i, "--db").trim();
+      if (!val) throw new Error("--db cannot be empty");
+      parsed.dbPath = val;
       i++;
     } else if (arg === "--password") {
-      parsed.password = requireVal(argv, i, "--password");
+      const rawPw = requireVal(argv, i, "--password", true);
+      if (rawPw.trim().length === 0) {
+        throw new Error("--password cannot be empty or whitespace-only");
+      }
+      parsed.password = rawPw;
       i++;
     } else if (arg === "--github") {
-      parsed.githubTarget = requireVal(argv, i, "--github").trim();
+      const val = requireVal(argv, i, "--github").trim();
+      if (!val) throw new Error("--github cannot be empty");
+      parsed.githubTarget = val;
       i++;
     } else {
       throw new Error(`Unknown argument "${arg}". Run \`stagepin --help\`.`);
@@ -102,7 +126,7 @@ async function main(): Promise<void> {
   if (args.mode === "demo") {
     demoSite = await startDemoUpstreamSite();
     upstreamUrl = demoSite.url;
-    dbPath = ":memory:";
+    dbPath = args.dbPath ?? ":memory:";
   }
 
   const running = await startStagepinServer({
@@ -144,14 +168,17 @@ async function main(): Promise<void> {
   console.log(`stagepin v0.1.0 listening on ${running.url}`);
   console.log(`  upstream: ${upstreamUrl}`);
   if (args.password) {
-    console.log(`  guest link: ${running.url}/?stagepin_key=${encodeURIComponent(args.password)}`);
+    console.log(`  guest auth: enabled (magic link format: ${running.url}/?stagepin_key=<your-password>)`);
   }
   if (args.githubTarget) {
     console.log(`  github push: ${args.githubTarget}`);
   }
   console.log("  Alt+Click any element in the browser to leave a visual pin. Press Ctrl+C to stop.");
 
+  let shuttingDown = false;
   const shutdown = async () => {
+    if (shuttingDown) return;
+    shuttingDown = true;
     await running.close();
     if (demoSite) await demoSite.close();
     process.exit(0);

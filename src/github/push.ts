@@ -1,3 +1,4 @@
+import { validateHttpUrl } from "../db/store.js";
 import type { GitHubTarget, Pin } from "../types.js";
 
 export function parseGitHubTarget(raw: string): GitHubTarget {
@@ -22,12 +23,13 @@ function mdCode(text: string): string {
 }
 
 export function formatPinMarkdown(pin: Pin): string {
+  const safeAuthor = pin.author.replace(/\r?\n/g, " ");
   const lines: string[] = [
     `### Visual Pin #${pin.id} (${pin.status.toUpperCase()})`,
     "",
     `> ${pin.body.replace(/\r?\n/g, "\n> ")}`,
     "",
-    `- **Author:** ${pin.author}`,
+    `- **Author:** ${safeAuthor}`,
     `- **Page:** ${mdCode(pin.pagePath)}`,
     `- **Element Selector:** ${mdCode(pin.selector)}`,
   ];
@@ -42,7 +44,8 @@ export function formatPinMarkdown(pin: Pin): string {
   if (pin.diagnostics.events.length > 0) {
     lines.push("", "**Captured Diagnostics (last events before pin):**", "");
     for (const ev of pin.diagnostics.events.slice(-10)) {
-      const detail = ev.status ? ` (HTTP ${ev.status}${ev.url ? ` ${ev.url}` : ""})` : "";
+      const urlPart = ev.url ? ` ${mdCode(ev.url)}` : "";
+      const detail = ev.status ? ` (HTTP ${ev.status}${urlPart})` : urlPart ? ` (${urlPart.trim()})` : "";
       lines.push(`- ${mdCode(ev.kind)}${detail}: ${mdCode(ev.message)}`);
     }
   }
@@ -68,10 +71,11 @@ export async function pushPinToGitHub(
     ? `https://api.github.com/repos/${target.owner}/${target.repo}/issues/${target.issueNumber}/comments`
     : `https://api.github.com/repos/${target.owner}/${target.repo}/issues`;
 
+  const cleanTitle = pin.body.replace(/\r?\n/g, " ").trim().slice(0, 72);
   const payload = target.issueNumber
     ? { body }
     : {
-        title: `[Stagepin #${pin.id}] ${pin.body.slice(0, 72)}`,
+        title: `[Stagepin #${pin.id}] ${cleanTitle}`,
         body,
       };
 
@@ -96,5 +100,9 @@ export async function pushPinToGitHub(
   if (!data.html_url) {
     throw new Error("GitHub API response did not include html_url");
   }
-  return { htmlUrl: data.html_url };
+  const safeUrl = validateHttpUrl(data.html_url);
+  if (!safeUrl.startsWith("https://")) {
+    throw new Error("GitHub API returned non-HTTPS html_url");
+  }
+  return { htmlUrl: safeUrl };
 }

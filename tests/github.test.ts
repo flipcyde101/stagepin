@@ -34,7 +34,7 @@ describe("GitHub Issue/PR push", () => {
     const md = formatPinMarkdown(samplePin);
     expect(md).toContain("Visual Pin #3");
     expect(md).toContain("`#pro-card > button`");
-    expect(md).toContain("HTTP 500 /api/checkout");
+    expect(md).toContain("HTTP 500 `/api/checkout`");
     expect(md).toContain("Pinned with [stagepin]");
 
     let capturedUrl = "";

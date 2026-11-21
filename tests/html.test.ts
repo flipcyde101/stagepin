@@ -25,6 +25,7 @@ describe("HTML decompression, injection, and CSP nonce rewriting", () => {
     expect(rewritten).toContain("default-src 'none'");
     expect(rewritten).toContain("img-src https: data:");
     expect(rewritten).toContain("script-src https://cdn.example.com 'self' 'nonce-nonce42'");
-    expect(rewritten).toContain("connect-src 'none' 'self'");
+    expect(rewritten).toContain("connect-src 'self'");
+    expect(rewritten).not.toContain("connect-src 'none'");
   });
 });

@@ -8,9 +8,13 @@ RUN npm run build
 FROM node:24-alpine
 WORKDIR /app
 ENV NODE_ENV=production
+ENV STAGEPIN_HOST=0.0.0.0
+ENV STAGEPIN_PORT=8080
+ENV STAGEPIN_DB=/data/stagepin.db
 COPY --from=build /app/dist ./dist
 COPY --from=build /app/package.json ./package.json
+RUN mkdir -p /data && chown node:node /data
+USER node
 VOLUME ["/data"]
 EXPOSE 8080
 ENTRYPOINT ["node", "/app/dist/cli.js"]
-CMD ["--host", "0.0.0.0", "--port", "8080", "--db", "/data/stagepin.db"]

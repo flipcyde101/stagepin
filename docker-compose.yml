@@ -1,0 +1,14 @@
+services:
+  stagepin:
+    build: .
+    ports:
+      - "8080:8080"
+    environment:
+      STAGEPIN_UPSTREAM: http://host.docker.internal:3000
+      STAGEPIN_PASSWORD: ""
+      GITHUB_TOKEN: ""
+    volumes:
+      - stagepin_data:/data
+
+volumes:
+  stagepin_data:

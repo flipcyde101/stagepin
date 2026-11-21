@@ -1,0 +1,54 @@
+{
+  "name": "stagepin",
+  "version": "0.1.0",
+  "description": "Self-hosted Vercel Preview Comments for any website: zero-code reverse proxy with Shadow DOM pins, console/network capture, SQLite persistence, and GitHub Issue/PR push.",
+  "license": "MIT",
+  "type": "module",
+  "engines": {
+    "node": ">=24.0.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/flipcyde101/stagepin.git"
+  },
+  "homepage": "https://github.com/flipcyde101/stagepin#readme",
+  "bugs": {
+    "url": "https://github.com/flipcyde101/stagepin/issues"
+  },
+  "bin": {
+    "stagepin": "./dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "Dockerfile",
+    "docker-compose.yml",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "pretest": "npm run build",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit",
+    "prepublishOnly": "npm run typecheck && npm run build && npm test"
+  },
+  "keywords": [
+    "self-hosted",
+    "preview-comments",
+    "visual-feedback",
+    "reverse-proxy",
+    "shadow-dom",
+    "qa",
+    "design-review",
+    "github",
+    "docker",
+    "devtools"
+  ],
+  "devDependencies": {
+    "@types/node": "^22.15.0",
+    "tsup": "^8.4.0",
+    "typescript": "^5.8.3",
+    "vitest": "^3.1.4"
+  }
+}
